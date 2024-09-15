@@ -1,11 +1,16 @@
 [
 {
   "directory": "/home/ljl/Documents/code/cg/vulkan/source_code/vulkan-cuda",
-  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-g", "-O0", "-std=c++20", "-I", "/home/ljl/.xmake/packages/g/glm/1.0.1/1781f3ac6d8141628505a9ae557cd017/include", "-o", "build/.objs/vulkan_test/linux/x86_64/debug/src/main.cpp.o", "src/main.cpp"],
+  "arguments": ["/opt/cuda/bin/nvcc", "-c", "-Xcompiler", "-fPIE", "-G", "-g", "-lineinfo", "-O0", "-I/opt/cuda/include", "--std", "c++20", "-I/home/ljl/.xmake/packages/g/glm/1.0.1/1781f3ac6d8141628505a9ae557cd017/include", "-m64", "-rdc=true", "-gencode", "arch=compute_75,code=sm_75", "-o", "build/.objs/vulkan_test/linux/x86_64/debug/src/kernels.cu.o", "src/kernels.cu"],
+  "file": "src/kernels.cu"
+},
+{
+  "directory": "/home/ljl/Documents/code/cg/vulkan/source_code/vulkan-cuda",
+  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-g", "-O0", "-std=c++20", "-I/opt/cuda/include", "-I", "/home/ljl/.xmake/packages/g/glm/1.0.1/1781f3ac6d8141628505a9ae557cd017/include", "-o", "build/.objs/vulkan_test/linux/x86_64/debug/src/main.cpp.o", "src/main.cpp"],
   "file": "src/main.cpp"
 },
 {
   "directory": "/home/ljl/Documents/code/cg/vulkan/source_code/vulkan-cuda",
-  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-g", "-O0", "-std=c++20", "-I", "/home/ljl/.xmake/packages/g/glm/1.0.1/1781f3ac6d8141628505a9ae557cd017/include", "-o", "build/.objs/vulkan_test/linux/x86_64/debug/src/queue.cpp.o", "src/queue.cpp"],
+  "arguments": ["/usr/bin/gcc", "-c", "-m64", "-g", "-O0", "-std=c++20", "-I/opt/cuda/include", "-I", "/home/ljl/.xmake/packages/g/glm/1.0.1/1781f3ac6d8141628505a9ae557cd017/include", "-o", "build/.objs/vulkan_test/linux/x86_64/debug/src/queue.cpp.o", "src/queue.cpp"],
   "file": "src/queue.cpp"
 }]

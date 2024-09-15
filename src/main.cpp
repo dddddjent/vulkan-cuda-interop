@@ -1,11 +1,11 @@
 #include <algorithm>
-#include <array>
 #include <cstring>
-#include <glm/glm.hpp>
 #include <set>
 #include <vector>
 #define GLFW_INCLUDE_VULKAN
+#include "kernels.h"
 #include "queue.h"
+#include "util.h"
 #include <GLFW/glfw3.h>
 #include <cstdlib>
 #include <fstream>
@@ -15,37 +15,6 @@
 #include <stdexcept>
 
 using namespace std;
-
-struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
-
-    static VkVertexInputBindingDescription getBindingDescription()
-    {
-        VkVertexInputBindingDescription bindingDescription {};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
-    {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions {};
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-        return attributeDescriptions;
-    }
-};
 
 class HelloTriangleApplication {
 
@@ -60,6 +29,7 @@ public:
     {
         initWindow();
         initVulkan();
+        initCuda();
         mainLoop();
         cleanup();
     }
@@ -110,7 +80,7 @@ private:
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_1;
 
         uint32_t glfwExtensionCount = 0;
         const char** glfwExtensions;
@@ -130,6 +100,24 @@ private:
         }
         if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
             throw std::runtime_error("failed to create instance!");
+        }
+
+        fpGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)vkGetInstanceProcAddr(
+            instance, "vkGetPhysicalDeviceProperties2");
+        if (fpGetPhysicalDeviceProperties2 == NULL) {
+            throw std::runtime_error(
+                "Vulkan: Proc address for \"vkGetPhysicalDeviceProperties2KHR\" not "
+                "found.\n");
+        }
+
+        fpGetMemoryFdKHR = (PFN_vkGetMemoryFdKHR)vkGetInstanceProcAddr(
+            instance, "vkGetMemoryFdKHR");
+        if (fpGetMemoryFdKHR == NULL) {
+            throw std::runtime_error(
+                "Vulkan: Proc address for \"vkGetMemoryFdKHR\" not found.\n");
+        } else {
+            std::cout << "Vulkan proc address for vkGetMemoryFdKHR - "
+                      << fpGetMemoryFdKHR << std::endl;
         }
     }
 
@@ -171,6 +159,10 @@ private:
 
         for (const auto& extension : availableExtensions) {
             requiredExtensions.erase(extension.extensionName);
+        }
+
+        for (const auto& extension : requiredExtensions) {
+            cout << extension << endl;
         }
 
         return requiredExtensions.empty();
@@ -244,6 +236,22 @@ private:
         if (physicalDevice == VK_NULL_HANDLE) {
             throw std::runtime_error("failed to find a suitable GPU!");
         }
+
+        std::cout << "Selected physical device = " << physicalDevice << std::endl;
+
+        VkPhysicalDeviceIDProperties vkPhysicalDeviceIDProperties = {};
+        vkPhysicalDeviceIDProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        vkPhysicalDeviceIDProperties.pNext = NULL;
+
+        VkPhysicalDeviceProperties2 vkPhysicalDeviceProperties2 = {};
+        vkPhysicalDeviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        vkPhysicalDeviceProperties2.pNext = &vkPhysicalDeviceIDProperties;
+
+        fpGetPhysicalDeviceProperties2(physicalDevice,
+            &vkPhysicalDeviceProperties2);
+
+        memcpy(vkDeviceUUID, vkPhysicalDeviceIDProperties.deviceUUID,
+            sizeof(vkDeviceUUID));
     }
 
     void createLogicalDeviceAndQueue()
@@ -666,6 +674,43 @@ private:
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
     }
 
+    void createExtBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+    {
+        // buffer
+        VkExternalMemoryBufferCreateInfo externalBufferInfo = {};
+        externalBufferInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+        externalBufferInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+        VkBufferCreateInfo bufferInfo {};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bufferInfo.pNext = &externalBufferInfo;
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create vertex buffer!");
+        }
+
+        // memory
+        VkExportMemoryAllocateInfo exportMemoryInfo = {};
+        exportMemoryInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+        exportMemoryInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        allocInfo.pNext = &exportMemoryInfo;
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate vertex buffer memory!");
+        }
+        vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    }
+
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
     {
         VkCommandBufferAllocateInfo allocInfo {};
@@ -716,7 +761,7 @@ private:
         memcpy(data, vertices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
-        createBuffer(bufferSize,
+        createExtBuffer(bufferSize,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             vertexBuffer, vertexBufferMemory);
@@ -724,6 +769,18 @@ private:
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
+    int getVkVertexMemHandle()
+    {
+        int fd;
+        VkMemoryGetFdInfoKHR vkMemoryGetFdInfoKHR = {};
+        vkMemoryGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+        vkMemoryGetFdInfoKHR.memory = vertexBufferMemory;
+        vkMemoryGetFdInfoKHR.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+        fpGetMemoryFdKHR(device, &vkMemoryGetFdInfoKHR, &fd);
+        return fd;
     }
 
     void createIndexBuffer()
@@ -840,6 +897,26 @@ private:
         }
     }
 
+    int getVkSemaphoreHandle(
+        VkExternalSemaphoreHandleTypeFlagBitsKHR externalSemaphoreHandleType,
+        VkSemaphore& semVkCuda)
+    {
+        if (externalSemaphoreHandleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) {
+            int fd;
+
+            VkSemaphoreGetFdInfoKHR vulkanSemaphoreGetFdInfoKHR = {};
+            vulkanSemaphoreGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
+            vulkanSemaphoreGetFdInfoKHR.pNext = NULL;
+            vulkanSemaphoreGetFdInfoKHR.semaphore = semVkCuda;
+            vulkanSemaphoreGetFdInfoKHR.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+
+            fpGetSemaphoreFdKHR(device, &vulkanSemaphoreGetFdInfoKHR, &fd);
+
+            return fd;
+        }
+        return -1;
+    }
+
     void initVulkan()
     {
         createInstance();
@@ -855,6 +932,13 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createSyncObjects();
+    }
+
+    void initCuda()
+    {
+        cudaApp.init(
+            getVkVertexMemHandle(),
+            sizeof(Vertex) * vertices.size());
     }
 
     void drawFrame()
@@ -948,6 +1032,7 @@ private:
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             drawFrame();
+            cudaApp.step();
         }
         vkDeviceWaitIdle(device);
     }
@@ -987,8 +1072,14 @@ private:
     const int MAX_FRAMES_IN_FLIGHT = 2;
     uint32_t currentFrame = 0;
 
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        // VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+
+        VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
     };
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"
@@ -1044,6 +1135,13 @@ private:
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+
+    uint8_t vkDeviceUUID[VK_UUID_SIZE];
+    PFN_vkGetMemoryFdKHR fpGetMemoryFdKHR = NULL;
+    PFN_vkGetSemaphoreFdKHR fpGetSemaphoreFdKHR = NULL;
+    PFN_vkGetPhysicalDeviceProperties2 fpGetPhysicalDeviceProperties2;
+
+    CudaApp cudaApp;
 };
 
 int main()

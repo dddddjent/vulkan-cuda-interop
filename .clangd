@@ -1,2 +1,6 @@
-# CompileFlags:                     # Tweak the parse settings
-#   Add: [-DDEBUG]             # treat all files as C++, enable more warnings
+CompileFlags:                     # Tweak the parse settings
+  Add:     
+    - --cuda-gpu-arch=sm_75
+  Remove:
+    - -rdc=true 
+    - -gencode
