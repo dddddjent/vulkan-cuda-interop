@@ -20,16 +20,15 @@ void CudaApp::init(int fd, int bufferSize)
 
     void* devPtrVoid;
     cudaExternalMemoryGetMappedBuffer(&devPtrVoid, cudaExternalMemory, &bufferDesc);
-    devPtr = reinterpret_cast<float*>(devPtrVoid);
+    devPtr = reinterpret_cast<Vertex*>(devPtrVoid);
 }
 
-__global__ void changeColors(float* vertexBuffer)
+__global__ void changeColors(Vertex* vertexBuffer)
 {
     auto tid = get_tid();
-    float& val = *(vertexBuffer + tid * sizeof(Vertex) / sizeof(float) + 2);
-    val += 0.004f;
-    if (val > 1.0f)
-        val = 0.0f;
+    vertexBuffer[tid].color.r += 0.004f;
+    if (vertexBuffer[tid].color.r > 1.0f)
+        vertexBuffer[tid].color.r = 0.0f;
 }
 
 void CudaApp::step()

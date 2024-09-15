@@ -3,8 +3,10 @@
 #include <cuda.h>
 #include <iostream>
 
+struct Vertex;
+
 class CudaApp {
-    float *devPtr;
+    Vertex *devPtr;
 
 public:
     void init(int fd, int bufferSize);
