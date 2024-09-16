@@ -287,6 +287,16 @@ private:
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
+    void getKHRExtensionFn()
+    {
+        fpGetSemaphoreFdKHR = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(
+            device, "vkGetSemaphoreFdKHR");
+        if (fpGetSemaphoreFdKHR == NULL) {
+            throw std::runtime_error(
+                "Vulkan: Proc address for \"vkGetSemaphoreFdKHR\" not found.\n");
+        }
+    }
+
     void createSurface()
     {
         if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
@@ -891,30 +901,51 @@ private:
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS || vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS || vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS
+                || vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS
+                || vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create synchronization objects for a frame!");
             }
         }
     }
 
-    int getVkSemaphoreHandle(
-        VkExternalSemaphoreHandleTypeFlagBitsKHR externalSemaphoreHandleType,
-        VkSemaphore& semVkCuda)
+    void createSyncObjectsExt()
     {
-        if (externalSemaphoreHandleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) {
-            int fd;
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-            VkSemaphoreGetFdInfoKHR vulkanSemaphoreGetFdInfoKHR = {};
-            vulkanSemaphoreGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
-            vulkanSemaphoreGetFdInfoKHR.pNext = NULL;
-            vulkanSemaphoreGetFdInfoKHR.semaphore = semVkCuda;
-            vulkanSemaphoreGetFdInfoKHR.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+        memset(&semaphoreInfo, 0, sizeof(semaphoreInfo));
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-            fpGetSemaphoreFdKHR(device, &vulkanSemaphoreGetFdInfoKHR, &fd);
+        VkExportSemaphoreCreateInfoKHR vulkanExportSemaphoreCreateInfo = {};
+        vulkanExportSemaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO_KHR;
+        vulkanExportSemaphoreCreateInfo.pNext = NULL;
+        vulkanExportSemaphoreCreateInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+        semaphoreInfo.pNext = &vulkanExportSemaphoreCreateInfo;
 
-            return fd;
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr,
+                &cudaUpdateVkSemaphore)
+                != VK_SUCCESS
+            || vkCreateSemaphore(device, &semaphoreInfo, nullptr,
+                   &vkUpdateCudaSemaphore)
+                != VK_SUCCESS) {
+            throw std::runtime_error(
+                "failed to create synchronization objects for a CUDA-Vulkan!");
         }
-        return -1;
+    }
+
+    int getVkSemaphoreHandle(VkSemaphore& semaphore)
+    {
+        int fd;
+
+        VkSemaphoreGetFdInfoKHR vulkanSemaphoreGetFdInfoKHR = {};
+        vulkanSemaphoreGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
+        vulkanSemaphoreGetFdInfoKHR.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+        vulkanSemaphoreGetFdInfoKHR.semaphore = semaphore;
+
+        auto result = fpGetSemaphoreFdKHR(device, &vulkanSemaphoreGetFdInfoKHR, &fd);
+
+        return fd;
     }
 
     void initVulkan()
@@ -923,6 +954,7 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDeviceAndQueue();
+        getKHRExtensionFn();
         createSwapChain();
         createImageViews();
         createRenderPass();
@@ -932,21 +964,26 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createSyncObjects();
+        createSyncObjectsExt();
     }
 
     void initCuda()
     {
-        cudaApp.init(
+        cudaApp.initMemHandle(
             getVkVertexMemHandle(),
             sizeof(Vertex) * vertices.size());
+
+        cudaApp.initSemaphore(
+            getVkSemaphoreHandle(vkUpdateCudaSemaphore),
+            getVkSemaphoreHandle(cudaUpdateVkSemaphore));
     }
 
     void drawFrame()
     {
-        vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+        vkWaitForFences(device, 1, &inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT], VK_TRUE, UINT64_MAX);
 
         uint32_t imageIndex;
-        VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT], VK_NULL_HANDLE, &imageIndex);
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
             recreateSwapChain();
             return;
@@ -954,27 +991,27 @@ private:
             throw std::runtime_error("failed to acquire swap chain image!");
         }
 
-        vkResetFences(device, 1, &inFlightFences[currentFrame]);
+        vkResetFences(device, 1, &inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT]);
 
-        vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-        recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+        vkResetCommandBuffer(commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT], 0);
+        recordCommandBuffer(commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT], imageIndex);
 
         VkSubmitInfo submitInfo {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT] };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
+        submitInfo.pCommandBuffers = &commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT];
 
-        VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT] };
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT]) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
 
@@ -995,7 +1032,7 @@ private:
             throw std::runtime_error("failed to present swap chain image!");
         }
 
-        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        currentFrame = currentFrame + 1;
     }
 
     void cleanupSwapChain()
@@ -1044,6 +1081,8 @@ private:
             vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
             vkDestroyFence(device, inFlightFences[i], nullptr);
         }
+        vkDestroySemaphore(device, cudaUpdateVkSemaphore, nullptr);
+        vkDestroySemaphore(device, vkUpdateCudaSemaphore, nullptr);
 
         vkDestroyCommandPool(device, commandPool, nullptr);
 
@@ -1076,7 +1115,6 @@ private:
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-        // VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
 
         VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
@@ -1118,6 +1156,7 @@ private:
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
 
+    VkSemaphore cudaUpdateVkSemaphore, vkUpdateCudaSemaphore;
     vector<VkSemaphore> imageAvailableSemaphores;
     vector<VkSemaphore> renderFinishedSemaphores;
     vector<VkFence> inFlightFences;
