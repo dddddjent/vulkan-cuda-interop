@@ -11,11 +11,16 @@ class CudaApp {
     cudaExternalSemaphore_t cudaVkSemaphore;
     cudaExternalSemaphore_t vkCudaSemaphore;
     cudaExternalMemory_t cudaExternalMemory;
-    
+    cudaStream_t streamToRun;
+
+    void waitOnSemaphore(cudaExternalSemaphore_t& semaphore);
+    void signalSemaphore(cudaExternalSemaphore_t& semaphore);
+
 public:
     void initSemaphore(int vkCudaFd, int cudaVkFd);
     void initMemHandle(int fd, int bufferSize);
-    
+    void init();
+
     void step();
     void cleanup();
 };

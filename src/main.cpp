@@ -969,6 +969,8 @@ private:
 
     void initCuda()
     {
+        cudaApp.init();
+
         cudaApp.initMemHandle(
             getVkVertexMemHandle(),
             sizeof(Vertex) * vertices.size());
@@ -999,16 +1001,23 @@ private:
         VkSubmitInfo submitInfo {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT] };
-        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
+        vector<VkSemaphore> waitSemaphores = { imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT] };
+        if (currentFrame != 0)
+            waitSemaphores.emplace_back(cudaUpdateVkSemaphore);
+        vector<VkPipelineStageFlags> waitStages = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        if (currentFrame != 0)
+            waitStages.emplace_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        submitInfo.waitSemaphoreCount = waitSemaphores.size();
+        submitInfo.pWaitSemaphores = waitSemaphores.data();
+        submitInfo.pWaitDstStageMask = waitStages.data();
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT];
 
-        VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT] };
-        submitInfo.signalSemaphoreCount = 1;
+        VkSemaphore signalSemaphores[] = {
+            renderFinishedSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT],
+            vkUpdateCudaSemaphore
+        };
+        submitInfo.signalSemaphoreCount = 2;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT]) != VK_SUCCESS) {
