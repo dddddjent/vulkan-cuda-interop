@@ -18,10 +18,10 @@ __global__ void rotateVertices(Vertex* vertexBuffer)
 {
     auto tid = get_tid();
     auto& pos = vertexBuffer[tid].pos;
-    
+
     glm::mat4 mat = glm::mat4(1.0f);
     mat = glm::rotate(mat, glm::radians(2.0f), glm::vec3(0.0, 0.0, 1.0));
-    
+
     glm::vec4 temp(pos, 0, 1);
     temp = mat * temp;
     pos.x = temp.x;
@@ -102,6 +102,11 @@ void CudaApp::step()
     rotateVertices<<<1, 4, 0, streamToRun>>>(devPtr);
 
     signalSemaphore(cudaVkSemaphore);
+}
+
+void CudaApp::sync()
+{
+    cudaDeviceSynchronize();
 }
 
 void CudaApp::cleanup()

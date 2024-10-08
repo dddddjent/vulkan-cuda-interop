@@ -21,6 +21,7 @@ public:
     void initMemHandle(int fd, int bufferSize);
     void init();
 
+    void sync();
     void step();
     void cleanup();
 };
