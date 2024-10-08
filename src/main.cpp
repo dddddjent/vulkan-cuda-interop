@@ -986,9 +986,12 @@ private:
 
         uint32_t imageIndex;
         VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT], VK_NULL_HANDLE, &imageIndex);
-        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-            recreateSwapChain();
-            return;
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+            while (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+                recreateSwapChain();
+                vkWaitForFences(device, 1, &inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT], VK_TRUE, UINT64_MAX);
+                result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT], VK_NULL_HANDLE, &imageIndex);
+            }
         } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
@@ -1065,7 +1068,6 @@ private:
         }
 
         vkDeviceWaitIdle(device);
-        cudaApp.sync();
 
         cleanupSwapChain();
 
@@ -1083,41 +1085,6 @@ private:
         }
 
         vkDeviceWaitIdle(device);
-        // vkResetFences(device, 1, &inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT]);
-        // vkResetCommandBuffer(commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT], 0);
-        // VkCommandBufferBeginInfo beginInfo {};
-        // beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        // beginInfo.flags = 0; // Optional
-        // beginInfo.pInheritanceInfo = nullptr; // Optional
-        // if (vkBeginCommandBuffer(commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT], &beginInfo) != VK_SUCCESS) {
-        //     throw std::runtime_error("failed to begin recording command buffer!");
-        // }
-        // if (vkEndCommandBuffer(commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT]) != VK_SUCCESS) {
-        //     throw std::runtime_error("failed to record command buffer!");
-        // }
-        // VkSubmitInfo submitInfo {};
-        // submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        // vector<VkSemaphore> waitSemaphores = {};
-        // waitSemaphores.emplace_back(cudaUpdateVkSemaphore);
-        // vector<VkPipelineStageFlags> waitStages = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-        // if (currentFrame != 0)
-        //     waitStages.emplace_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-        // submitInfo.waitSemaphoreCount = waitSemaphores.size();
-        // submitInfo.pWaitSemaphores = waitSemaphores.data();
-        // submitInfo.pWaitDstStageMask = waitStages.data();
-        // submitInfo.commandBufferCount = 1;
-        // submitInfo.pCommandBuffers = &commandBuffers[currentFrame % MAX_FRAMES_IN_FLIGHT];
-        // VkSemaphore signalSemaphores[] = {
-        //     renderFinishedSemaphores[currentFrame % MAX_FRAMES_IN_FLIGHT],
-        //     vkUpdateCudaSemaphore
-        // };
-        // submitInfo.signalSemaphoreCount = 2;
-        // submitInfo.pSignalSemaphores = signalSemaphores;
-        // if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame % MAX_FRAMES_IN_FLIGHT]) != VK_SUCCESS) {
-        //     throw std::runtime_error("failed to submit draw command buffer!");
-        // }
-        // vkDeviceWaitIdle(device);
-
         std::cout << 1 << std::endl;
         cudaApp.sync();
         std::cout << 1 << std::endl;
